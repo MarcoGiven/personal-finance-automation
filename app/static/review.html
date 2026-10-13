@@ -236,6 +236,20 @@
                 );
         }
 
+        function formatAmount(transaction) {
+            const value = transaction.amount_cents / 100;
+
+            if (transaction.transaction_type === "income") {
+                return `+$${Math.abs(value).toFixed(2)}`;
+            }
+
+            if (transaction.transaction_type === "expense" && value < 0) {
+                return `-$${Math.abs(value).toFixed(2)} (Refund)`;
+            }
+
+            return `$${Math.abs(value).toFixed(2)}`;
+        }
+
         function renderTransactions() {
             body.replaceChildren();
 
@@ -263,7 +277,9 @@
                 );
 
                 function toggleCategory() {
-                    categorySelect.disabled = typeSelect.value !== "expense";
+                    categorySelect.disabled =
+                        typeSelect.value !== "expense" &&
+                        transaction.amount_cents >= 0;
                 }
 
                 typeSelect.onchange = toggleCategory;
@@ -298,16 +314,74 @@
                     }
                 };
 
+
+                const actionContainer = document.createElement("div");
+                actionContainer.style.display = "flex";
+                actionContainer.style.gap = "6px";
+                actionContainer.style.flexWrap = "wrap";
+
+                actionContainer.appendChild(saveButton);
+
+                if (
+                    transaction.amount_cents < 0 &&
+                    transaction.status !== "synced" &&
+                    transaction.status !== "excluded"
+                ) {
+                    const reimbursementButton = document.createElement("button");
+
+                    reimbursementButton.textContent = "Reimbursement";
+
+                    reimbursementButton.onclick = async () => {
+                        const category = categorySelect.value;
+
+                        if (!category) {
+                            showMessage(
+                                "Select an expense category first.",
+                                true
+                            );
+                            return;
+                        }
+
+                        reimbursementButton.disabled = true;
+
+                        try {
+                            await api(
+                                `/api/review/transactions/${transaction.id}/reimbursement`,
+                                {
+                                    method: "POST",
+                                    headers: {
+                                        "Content-Type": "application/json"
+                                    },
+                                    body: JSON.stringify({ category })
+                                }
+                            );
+
+                            showMessage(
+                                "Marked as reimbursement. Approve to sync."
+                            );
+
+                            await loadTransactions();
+
+                        } catch (error) {
+                            showMessage(error.message, true);
+                            reimbursementButton.disabled = false;
+                        }
+                    };
+
+                    actionContainer.appendChild(reimbursementButton);
+                }
+
+
                 const cells = [
                     checkbox,
                     transaction.date,
                     transaction.description,
                     transaction.account_id,
-                    `$${(transaction.amount_cents / 100).toFixed(2)}`,
+                    formatAmount(transaction),
                     typeSelect,
                     categorySelect,
                     transaction.status,
-                    saveButton
+                    actionContainer
                 ];
 
                 cells.forEach(value => {

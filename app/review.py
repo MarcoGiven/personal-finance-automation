@@ -21,6 +21,10 @@ class ApprovalRequest(BaseModel):
     ids: list[int]
 
 
+class ReimbursementRequest(BaseModel):
+    category: str
+
+
 def get_transaction(conn, transaction_id):
     row = conn.execute(
         "SELECT * FROM transactions WHERE id = ?",
@@ -105,6 +109,7 @@ def update_transaction(
     return {"status": "updated", "id": transaction_id}
 
 
+
 @router.post("/approve")
 def approve_transactions(request: ApprovalRequest):
     ids = list(dict.fromkeys(request.ids))
@@ -112,34 +117,36 @@ def approve_transactions(request: ApprovalRequest):
     if not ids:
         raise HTTPException(400, "No transactions selected")
 
-    # Validate the entire selection before making changes.
     with get_connection() as conn:
         for transaction_id in ids:
             transaction = get_transaction(conn, transaction_id)
 
-            if transaction["status"] == "synced":
+            if transaction["status"] in ("synced", "excluded"):
                 raise HTTPException(
                     409,
-                    f"Transaction {transaction_id} is already synced",
+                    f"Transaction {transaction_id} cannot be approved",
                 )
 
-            if transaction["transaction_type"] != "expense":
+            transaction_type = transaction["transaction_type"]
+
+            if transaction_type == "transfer":
                 raise HTTPException(
                     400,
-                    f"Transaction {transaction_id} is not an expense",
+                    f"Transaction {transaction_id} is a transfer. "
+                    "Exclude it instead.",
                 )
 
-            if transaction["category"] not in VALID_CATEGORIES:
-                raise HTTPException(
-                    400,
-                    f"Transaction {transaction_id} needs a category",
-                )
+            if transaction_type == "expense":
+                if transaction["category"] not in VALID_CATEGORIES:
+                    raise HTTPException(
+                        400,
+                        f"Transaction {transaction_id} needs a category",
+                    )
 
-            if transaction["amount_cents"] <= 0:
+            if transaction["amount_cents"] == 0:
                 raise HTTPException(
                     400,
-                    f"Transaction {transaction_id} requires "
-                    "income/refund/transfer handling before approval",
+                    f"Transaction {transaction_id} has a zero amount",
                 )
 
         for transaction_id in ids:
@@ -153,6 +160,7 @@ def approve_transactions(request: ApprovalRequest):
             )
 
     return {"approved": len(ids), "ids": ids}
+
 
 
 @router.post("/hold")
@@ -219,3 +227,59 @@ def exclude_transactions(request: ApprovalRequest):
             )
 
     return {"excluded": len(ids), "ids": ids}
+
+
+@router.post("/transactions/{transaction_id}/reimbursement")
+def mark_reimbursement(
+    transaction_id: int,
+    request: ReimbursementRequest,
+):
+    if request.category not in VALID_CATEGORIES:
+        raise HTTPException(
+            400, "A valid expense category is required"
+        )
+
+    with get_connection() as conn:
+        transaction = get_transaction(conn, transaction_id)
+
+        if transaction["status"] in ("synced", "excluded"):
+            raise HTTPException(
+                409,
+                "This transaction cannot be modified"
+            )
+
+        # Plaid uses negative amounts for incoming money.
+        if transaction["amount_cents"] >= 0:
+            raise HTTPException(
+                400,
+                "Only incoming payments can be reimbursements"
+            )
+
+        description = transaction["description"]
+
+        if not description.startswith("Reimbursement - "):
+            description = f"Reimbursement - {description}"
+
+        conn.execute(
+            """
+            UPDATE transactions
+            SET description = ?,
+                transaction_type = 'expense',
+                category = ?,
+                status = 'pending'
+            WHERE id = ?
+            """,
+            (
+                description,
+                request.category,
+                transaction_id,
+            ),
+        )
+
+    return {
+        "status": "pending",
+        "id": transaction_id,
+        "category": request.category,
+        "transaction_type": "expense",
+    }
+
