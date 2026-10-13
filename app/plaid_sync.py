@@ -12,6 +12,8 @@ from app.plaid_client import get_plaid_client
 from app.token_store import load_connections, save_cursor
 from app.database import initialize_database, get_connection
 from app.categorizer import categorize_transaction
+from plaid.model.accounts_get_request import AccountsGetRequest
+from app.classifier import classify_transaction
 
 
 def to_cents(amount):
@@ -22,8 +24,31 @@ def to_cents(amount):
     )
 
 
-def normalize_transaction(transaction):
-    """Convert a Plaid transaction to our database format."""
+def get_item_accounts(client, access_token):
+    """Get the accounts belonging to a Plaid connection."""
+
+    request = AccountsGetRequest(
+        access_token=access_token
+    )
+
+    response = client.accounts_get(request)
+
+    return {
+        account.account_id: account
+        for account in response.accounts
+    }
+
+
+
+def normalize_transaction(transaction, accounts):
+    """Convert and classify a Plaid transaction."""
+
+    account = accounts.get(transaction.account_id)
+
+    if account is None:
+        raise ValueError(
+            f"Unknown account: {transaction.account_id}"
+        )
 
     description = (
         transaction.merchant_name
@@ -31,18 +56,9 @@ def normalize_transaction(transaction):
         or "Unknown transaction"
     )
 
-    amount_cents = to_cents(transaction.amount)
-
-    if amount_cents > 0:
-        category, transaction_type = categorize_transaction(
-            transaction.name or description
-        )
-    else:
-        category = None
-        transaction_type = "income"
-
-    if transaction_type == "transfer":
-        category = None
+    transaction_type, category, signed_amount = (
+        classify_transaction(transaction, account)
+    )
 
     return {
         "source": "plaid",
@@ -50,7 +66,7 @@ def normalize_transaction(transaction):
         "external_id": transaction.transaction_id,
         "date": str(transaction.date),
         "description": description,
-        "amount_cents": abs(amount_cents),
+        "amount_cents": to_cents(signed_amount),
         "category": category,
         "transaction_type": transaction_type,
         "status": "pending",
@@ -101,7 +117,7 @@ def collect_changes(client, access_token, starting_cursor):
             raise
 
 
-def apply_changes(added, modified, removed):
+def apply_changes(added, modified, removed, accounts):
     """Update SQLite using Plaid's transaction changes."""
 
     with get_connection() as conn:
@@ -111,7 +127,7 @@ def apply_changes(added, modified, removed):
             if transaction.pending:
                 continue
 
-            normalized = normalize_transaction(transaction)
+            normalized = normalize_transaction(transaction, accounts)
 
             existing = conn.execute(
                 """
@@ -208,6 +224,11 @@ def sync_item(client, item_id, connection, write=False):
 
     starting_cursor = connection.get("cursor", "")
 
+    accounts = get_item_accounts(
+        client,
+        connection["access_token"]
+    )
+
     added, modified, removed, new_cursor = collect_changes(
         client,
         connection["access_token"],
@@ -224,7 +245,7 @@ def sync_item(client, item_id, connection, write=False):
         return
 
     # Save transactions before advancing the cursor.
-    apply_changes(added, modified, removed)
+    apply_changes(added, modified, removed, accounts)
     save_cursor(item_id, new_cursor)
 
     print("Transactions imported and cursor saved.")

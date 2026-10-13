@@ -135,6 +135,13 @@ def approve_transactions(request: ApprovalRequest):
                     f"Transaction {transaction_id} needs a category",
                 )
 
+            if transaction["amount_cents"] <= 0:
+                raise HTTPException(
+                    400,
+                    f"Transaction {transaction_id} requires "
+                    "income/refund/transfer handling before approval",
+                )
+
         for transaction_id in ids:
             conn.execute(
                 """

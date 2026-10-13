@@ -103,14 +103,24 @@ def read_sheet_rows(service, month):
     return rows
 
 
+
 def sync_transaction(service, transaction, write=False):
     """Safely prepare or write one expense."""
 
     if transaction["transaction_type"] != "expense":
         return "skipped_type"
 
+    # Prevent refunds and non-positive amounts from being
+    # exported until refund handling is implemented.
+    if transaction["amount_cents"] <= 0:
+        raise ValueError(
+            f"Cannot export non-positive expense: "
+            f"{transaction['id']}"
+        )
+
     if transaction["category"] not in VALID_CATEGORIES:
         return "skipped_category"
+
 
     month = get_month(transaction)
     key = transaction_key(transaction)
