@@ -1,0 +1,400 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Transaction Review</title>
+
+    <style>
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            background: #f4f6f8;
+            color: #17212b;
+            font-family: system-ui, sans-serif;
+        }
+
+        header {
+            background: white;
+            border-bottom: 1px solid #ddd;
+            padding: 20px 5%;
+        }
+
+        header h1 { margin: 0; font-size: 24px; }
+
+        main {
+            max-width: 1200px;
+            margin: 30px auto;
+            padding: 0 20px;
+        }
+
+        .toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 18px;
+        }
+
+        .actions {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .panel {
+            background: white;
+            border: 1px solid #e0e4e8;
+            border-radius: 12px;
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            text-align: left;
+            padding: 13px;
+            border-bottom: 1px solid #edf0f2;
+        }
+
+        th {
+            font-size: 12px;
+            color: #667085;
+            text-transform: uppercase;
+        }
+
+        td { font-size: 14px; }
+
+        select, button {
+            font: inherit;
+            border-radius: 6px;
+            padding: 8px 10px;
+        }
+
+        select {
+            border: 1px solid #d0d5dd;
+            background: white;
+            max-width: 190px;
+        }
+
+        button {
+            border: 1px solid #d0d5dd;
+            background: white;
+            cursor: pointer;
+        }
+
+        button.primary {
+            background: #087f7b;
+            border-color: #087f7b;
+            color: white;
+        }
+
+        button:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
+        .muted { color: #667085; font-size: 12px; }
+        .amount { font-variant-numeric: tabular-nums; }
+
+        #message {
+            min-height: 24px;
+            margin-bottom: 12px;
+            font-size: 14px;
+        }
+
+        .error { color: #b42318; }
+        .success { color: #067647; }
+    </style>
+</head>
+
+<body>
+    <header>
+        <h1>Personal Finance Automation</h1>
+        <div class="muted">Transaction Review</div>
+    </header>
+
+    <main>
+        <div class="toolbar">
+            <div class="actions">
+                <label for="statusFilter">Show:</label>
+                <select id="statusFilter">
+                    <option value="pending">Pending Review</option>
+                    <option value="ready">Approved</option>
+                    <option value="synced">Synced</option>
+                    <option value="all">All Transactions</option>
+                </select>
+            </div>
+
+            <div class="actions">
+                <span id="selectedCount">0 selected</span>
+                <button id="holdButton" disabled>Hold</button>
+                <button id="approveButton" class="primary" disabled>
+                    Approve Selected
+                </button>
+            </div>
+        </div>
+
+        <div id="message"></div>
+
+        <div class="panel">
+            <table>
+                <thead>
+                    <tr>
+                        <th><input type="checkbox" id="selectAll"></th>
+                        <th>Date</th>
+                        <th>Merchant</th>
+                        <th>Account</th>
+                        <th>Amount</th>
+                        <th>Type</th>
+                        <th>Category</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="transactionBody"></tbody>
+            </table>
+        </div>
+    </main>
+
+    <script>
+        const CATEGORIES = [
+            "Food & Groceries",
+            "Utilities",
+            "Subscriptions",
+            "Entertainment",
+            "Shopping",
+            "Savings"
+        ];
+
+        const selected = new Set();
+        let transactions = [];
+
+        const body = document.getElementById("transactionBody");
+        const filter = document.getElementById("statusFilter");
+
+        function showMessage(text, error = false) {
+            const el = document.getElementById("message");
+            el.textContent = text;
+            el.className = error ? "error" : "success";
+        }
+
+        async function api(url, options = {}) {
+            const response = await fetch(url, options);
+
+            if (!response.ok) {
+                let message = `Request failed (${response.status})`;
+                try {
+                    const data = await response.json();
+                    message = String(data.detail || message);
+                } catch {}
+                throw new Error(message);
+            }
+
+            return response.json();
+        }
+
+        function makeSelect(options, value) {
+            const select = document.createElement("select");
+
+            options.forEach(option => {
+                const element = document.createElement("option");
+                element.value = option;
+                element.textContent = option || "Uncategorized";
+                select.appendChild(element);
+            });
+
+            select.value = value || "";
+            return select;
+        }
+
+        function updateButtons() {
+            document.getElementById("selectedCount").textContent =
+                `${selected.size} selected`;
+
+            const selectedRows = transactions.filter(t => selected.has(t.id));
+            const hasSelection = selectedRows.length > 0;
+
+            document.getElementById("approveButton").disabled =
+                !hasSelection || selectedRows.some(t => t.status === "synced");
+
+            document.getElementById("holdButton").disabled =
+                !hasSelection || selectedRows.some(t => t.status === "synced");
+        }
+
+        function renderTransactions() {
+            body.replaceChildren();
+
+            for (const transaction of transactions) {
+                const tr = document.createElement("tr");
+
+                const checkbox = document.createElement("input");
+                checkbox.type = "checkbox";
+                checkbox.checked = selected.has(transaction.id);
+                checkbox.disabled = transaction.status === "synced";
+                checkbox.onchange = () => {
+                    if (checkbox.checked) selected.add(transaction.id);
+                    else selected.delete(transaction.id);
+                    updateButtons();
+                };
+
+                const typeSelect = makeSelect(
+                    ["expense", "income", "transfer"],
+                    transaction.transaction_type
+                );
+
+                const categorySelect = makeSelect(
+                    ["", ...CATEGORIES],
+                    transaction.category
+                );
+
+                function toggleCategory() {
+                    categorySelect.disabled = typeSelect.value !== "expense";
+                }
+
+                typeSelect.onchange = toggleCategory;
+                toggleCategory();
+
+                const saveButton = document.createElement("button");
+                saveButton.textContent = "Save";
+                saveButton.disabled = transaction.status === "synced";
+
+                saveButton.onclick = async () => {
+                    saveButton.disabled = true;
+                    try {
+                        await api(
+                            `/api/review/transactions/${transaction.id}`,
+                            {
+                                method: "PATCH",
+                                headers: {"Content-Type": "application/json"},
+                                body: JSON.stringify({
+                                    transaction_type: typeSelect.value,
+                                    category: typeSelect.value === "expense"
+                                        ? (categorySelect.value || null)
+                                        : null
+                                })
+                            }
+                        );
+
+                        showMessage("Transaction updated.");
+                        await loadTransactions();
+                    } catch (error) {
+                        showMessage(error.message, true);
+                        saveButton.disabled = false;
+                    }
+                };
+
+                const cells = [
+                    checkbox,
+                    transaction.date,
+                    transaction.description,
+                    transaction.account_id,
+                    `$${(transaction.amount_cents / 100).toFixed(2)}`,
+                    typeSelect,
+                    categorySelect,
+                    transaction.status,
+                    saveButton
+                ];
+
+                cells.forEach(value => {
+                    const td = document.createElement("td");
+
+                    if (value instanceof HTMLElement) {
+                        td.appendChild(value);
+                    } else {
+                        td.textContent = String(value);
+                    }
+
+                    tr.appendChild(td);
+                });
+
+                body.appendChild(tr);
+            }
+
+            if (transactions.length === 0) {
+                const tr = document.createElement("tr");
+                const td = document.createElement("td");
+                td.colSpan = 9;
+                td.textContent = "No transactions found.";
+                tr.appendChild(td);
+                body.appendChild(tr);
+            }
+
+            updateButtons();
+        }
+
+        async function loadTransactions() {
+            const status = encodeURIComponent(filter.value);
+
+            transactions = await api(
+                `/api/review/transactions?status=${status}`
+            );
+
+            selected.clear();
+            document.getElementById("selectAll").checked = false;
+            renderTransactions();
+        }
+
+        async function bulkAction(action) {
+            if (!selected.size) return;
+
+            const button = document.getElementById(
+                action === "approve" ? "approveButton" : "holdButton"
+            );
+
+            button.disabled = true;
+
+            try {
+                const result = await api(`/api/review/${action}`, {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({ids: [...selected]})
+                });
+
+                showMessage(
+                    `${result.approved ?? result.held} transactions ${action}d.`
+                );
+
+                await loadTransactions();
+            } catch (error) {
+                showMessage(error.message, true);
+                updateButtons();
+            }
+        }
+
+        document.getElementById("approveButton").onclick =
+            () => bulkAction("approve");
+
+        document.getElementById("holdButton").onclick =
+            () => bulkAction("hold");
+
+        document.getElementById("selectAll").onchange = event => {
+            selected.clear();
+
+            if (event.target.checked) {
+                transactions.forEach(t => {
+                    if (t.status !== "synced") selected.add(t.id);
+                });
+            }
+
+            renderTransactions();
+        };
+
+        filter.onchange = () => {
+            loadTransactions().catch(error =>
+                showMessage(error.message, true)
+            );
+        };
+
+        loadTransactions().catch(error =>
+            showMessage(error.message, true)
+        );
+    </script>
+</body>
+</html>
