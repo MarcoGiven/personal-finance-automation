@@ -128,6 +128,7 @@
                     <option value="pending">Pending Review</option>
                     <option value="ready">Approved</option>
                     <option value="synced">Synced</option>
+                    <option value="excluded">Excluded</option>
                     <option value="all">All Transactions</option>
                 </select>
             </div>
@@ -135,6 +136,7 @@
             <div class="actions">
                 <span id="selectedCount">0 selected</span>
                 <button id="holdButton" disabled>Hold</button>
+                <button id="excludeButton" disabled>Exclude Selected</button>
                 <button id="approveButton" class="primary" disabled>
                     Approve Selected
                 </button>
@@ -226,6 +228,12 @@
 
             document.getElementById("holdButton").disabled =
                 !hasSelection || selectedRows.some(t => t.status === "synced");
+
+            document.getElementById("excludeButton").disabled =
+                !hasSelection || selectedRows.some(
+                    t => t.status === "synced" ||
+                        t.status === "excluded"
+                );
         }
 
         function renderTransactions() {
@@ -344,9 +352,13 @@
         async function bulkAction(action) {
             if (!selected.size) return;
 
-            const button = document.getElementById(
-                action === "approve" ? "approveButton" : "holdButton"
-            );
+            const buttonIds = {
+                approve: "approveButton",
+                hold: "holdButton",
+                exclude: "excludeButton"
+            };
+
+            const button = document.getElementById(buttonIds[action]);
 
             button.disabled = true;
 
@@ -358,7 +370,7 @@
                 });
 
                 showMessage(
-                    `${result.approved ?? result.held} transactions ${action}d.`
+                    `${result.approved ?? result.held ?? result.excluded} transactions processed.`
                 );
 
                 await loadTransactions();
@@ -373,6 +385,9 @@
 
         document.getElementById("holdButton").onclick =
             () => bulkAction("hold");
+
+        document.getElementById("excludeButton").onclick =
+            () => bulkAction("exclude");
 
         document.getElementById("selectAll").onchange = event => {
             selected.clear();

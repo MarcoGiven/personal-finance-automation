@@ -36,7 +36,7 @@ def get_transaction(conn, transaction_id):
 @router.get("/transactions")
 def list_transactions(
     status: Literal[
-        "pending", "ready", "synced", "all"
+        "pending", "ready", "synced", "excluded", "all"
     ] = "pending"
 ):
     with get_connection() as conn:
@@ -182,3 +182,40 @@ def hold_transactions(request: ApprovalRequest):
             )
 
     return {"held": len(ids)}
+
+
+@router.post("/exclude")
+def exclude_transactions(request: ApprovalRequest):
+    ids = list(dict.fromkeys(request.ids))
+
+    if not ids:
+        raise HTTPException(400, "No transactions selected")
+
+    with get_connection() as conn:
+        # Validate all records before updating any of them.
+        for transaction_id in ids:
+            transaction = get_transaction(conn, transaction_id)
+
+            if transaction["status"] == "synced":
+                raise HTTPException(
+                    409,
+                    "Cannot exclude an already synced transaction"
+                )
+
+            if transaction["status"] == "excluded":
+                raise HTTPException(
+                    409,
+                    "Transaction is already excluded"
+                )
+
+        for transaction_id in ids:
+            conn.execute(
+                """
+                UPDATE transactions
+                SET status = 'excluded'
+                WHERE id = ?
+                """,
+                (transaction_id,),
+            )
+
+    return {"excluded": len(ids), "ids": ids}
