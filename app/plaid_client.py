@@ -9,16 +9,23 @@ load_dotenv()
 
 
 def get_plaid_client():
-    if os.getenv("PLAID_ENV", "sandbox") != "sandbox":
-        raise ValueError("Only Sandbox is supported for now.")
+    environment = os.getenv("PLAID_ENV", "sandbox")
+
+    hosts = {
+        "sandbox": plaid.Environment.Sandbox,
+        "production": plaid.Environment.Production,
+    }
+
+    if environment not in hosts:
+        raise ValueError("Invalid PLAID_ENV")
 
     configuration = plaid.Configuration(
-        host=plaid.Environment.Sandbox,
+        host=hosts[environment],
         api_key={
             "clientId": os.environ["PLAID_CLIENT_ID"],
             "secret": os.environ["PLAID_SECRET"],
+            "plaidVersion": "2020-09-14",
         },
     )
 
-    api_client = plaid.ApiClient(configuration)
-    return plaid_api.PlaidApi(api_client)
+    return plaid_api.PlaidApi(plaid.ApiClient(configuration))

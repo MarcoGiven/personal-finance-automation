@@ -1,0 +1,124 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Finance Automation</title>
+
+    <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+
+    <style>
+        body {
+            font-family: system-ui, sans-serif;
+            max-width: 600px;
+            margin: 80px auto;
+            padding: 20px;
+        }
+
+        button {
+            background: #166534;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 12px 20px;
+            cursor: pointer;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        #status {
+            margin-top: 20px;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Personal Finance Automation</h1>
+
+    <p>Connect a financial institution to import transactions.</p>
+
+    <button id="connect" onclick="connectBank()">
+        Connect Bank
+    </button>
+
+    <p id="status">No connection started.</p>
+
+    <script>
+        const status = document.getElementById("status");
+        const button = document.getElementById("connect");
+
+        async function connectBank() {
+            button.disabled = true;
+            status.textContent = "Creating Plaid session...";
+
+            try {
+                const response = await fetch("/plaid/link-token", {
+                    method: "POST"
+                });
+
+                if (!response.ok) {
+                    throw new Error("Could not create Link token");
+                }
+
+                const data = await response.json();
+
+                const handler = Plaid.create({
+                    token: data.link_token,
+
+                    onSuccess: async (publicToken) => {
+                        status.textContent = "Saving connection...";
+
+                        try {
+                            const exchange = await fetch("/plaid/exchange", {
+                                method: "POST",
+                                headers: {
+                                    "Content-Type": "application/json"
+                                },
+                                body: JSON.stringify({
+                                    public_token: publicToken
+                                })
+                            });
+
+                            if (!exchange.ok) {
+                                throw new Error(
+                                    "Token exchange or storage failed"
+                                );
+                            }
+
+                            status.textContent =
+                                "Bank connected successfully.";
+                        } catch (error) {
+                            status.textContent = error.message +
+                                ". Do not reconnect until checked.";
+                        } finally {
+                            button.disabled = false;
+                        }
+                    },
+
+                    onExit: (error) => {
+                        if (error) {
+                            status.textContent =
+                                "Plaid Link exited with an error.";
+                        } else {
+                            status.textContent =
+                                "Connection canceled.";
+                        }
+
+                        button.disabled = false;
+                    }
+                });
+
+                handler.open();
+
+            } catch (error) {
+                status.textContent = error.message;
+                button.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
