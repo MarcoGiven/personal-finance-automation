@@ -1,6 +1,16 @@
-.venv/
+# Financial data
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Google authentication
+credentials.json
+token.json
+
+# Environment
 .env
+.venv/
 __pycache__/
 .pytest_cache/
-*.pyc
-*.db
