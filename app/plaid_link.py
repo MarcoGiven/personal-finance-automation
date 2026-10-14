@@ -68,6 +68,4 @@ def exchange_public_token(body: TokenExchangeRequest):
 
 @router.get("/connections")
 def get_connections():
-    return {
-        "item_ids": list_connection_ids()
-    }
+    return {"count": len(list_connection_ids())}

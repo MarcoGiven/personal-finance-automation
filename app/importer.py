@@ -63,11 +63,7 @@ def process_transaction(raw):
 
     # Only recognizable expenses are automatically ready.
     # Income and transfers require review during this milestone.
-    status = (
-        "ready"
-        if transaction_type == "expense" and category
-        else "pending"
-    )
+    status = "pending"
 
     return {
         "source": raw["source"].strip(),

@@ -104,7 +104,7 @@ python -c "from app.database import initialize_database; initialize_database()"
 **2. Start the local server:**
 
 ```bash
-python -m uvicorn app.main:app --reload --host 127.0.0.1
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 **3. Open Interfaces:**

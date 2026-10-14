@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from app.database import get_connection
 from app.sheets import VALID_CATEGORIES
+from app.accounts import get_account_names
 
 router = APIRouter(prefix="/api/review", tags=["Review"])
 
@@ -67,7 +68,18 @@ def list_transactions(
             query, parameters
         ).fetchall()
 
-    return [dict(row) for row in rows]
+    account_names = get_account_names()
+
+    return [
+        {
+            **dict(row),
+            "account_name": account_names.get(
+                row["account_id"],
+                "Unknown Account",
+            ),
+        }
+        for row in rows
+    ]
 
 
 

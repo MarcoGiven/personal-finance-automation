@@ -337,7 +337,7 @@ def sync_item(client, item_id, connection, write=False):
         starting_cursor,
     )
 
-    print(f"\nConnection: {item_id}")
+    print("\nProcessing Plaid connection")
     print(f"Added: {len(added)}")
     print(f"Modified: {len(modified)}")
     print(f"Removed: {len(removed)}")

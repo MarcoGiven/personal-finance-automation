@@ -53,7 +53,12 @@ def run_command(args: list[str], timeout: int):
             raise HTTPException(504, "Command timed out. Check the database and spreadsheet before retrying")
         output = "\n".join(filter(None, (result.stdout.strip(), result.stderr.strip())))
         if result.returncode != 0:
-            raise HTTPException(500, output[-6000:] or "Command failed")
+            print(f"Workflow command failed:\n{output}")
+
+            raise HTTPException(
+                status_code=500,
+                detail="Operation failed. Check the local server terminal."
+            )
         return {"success": True, "output": output[-12000:]}
     finally:
         _busy.release()
