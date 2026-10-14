@@ -5,8 +5,20 @@ from pathlib import Path
 import tempfile
 
 from cryptography.fernet import Fernet
+from dotenv import load_dotenv
 
-STORE = Path(__file__).resolve().parent.parent / "data" / "plaid_tokens.enc"
+load_dotenv()
+
+ENV = os.getenv("PLAID_ENV", "sandbox")
+
+if ENV not in ("sandbox", "production"):
+    raise ValueError("Invalid PLAID_ENV")
+
+STORE = (
+    Path(__file__).resolve().parent.parent
+    / "data"
+    / f"plaid_tokens_{ENV}.enc"
+)
 
 
 def get_cipher():

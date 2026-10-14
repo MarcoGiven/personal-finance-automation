@@ -1,8 +1,21 @@
 
 import sqlite3
 from pathlib import Path
+import os
+from dotenv import load_dotenv
 
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "finance.db"
+load_dotenv()
+
+ENV = os.getenv("PLAID_ENV", "sandbox")
+
+if ENV not in ("sandbox", "production"):
+    raise ValueError("Invalid PLAID_ENV")
+
+DB_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "data"
+    / f"finance_{ENV}.db"
+)
 
 
 def get_connection():
@@ -14,8 +27,10 @@ def get_connection():
     return conn
 
 
+
 def initialize_database():
     with get_connection() as conn:
+        # Main transaction table
         conn.execute("""
             CREATE TABLE IF NOT EXISTS transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -30,12 +45,51 @@ def initialize_database():
                     CHECK (transaction_type IN
                         ('expense', 'income', 'transfer')),
                 status TEXT NOT NULL DEFAULT 'pending'
-                    CHECK (status IN ('pending', 'ready', 'synced')),
+                    CHECK (status IN
+                        ('pending', 'ready', 'synced', 'excluded')),
+                manual_override INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
 
                 UNIQUE(source, account_id, external_id)
             )
         """)
+
+        # Add manual_override to databases created before
+        # this feature was implemented.
+        columns = {
+            row["name"]
+            for row in conn.execute(
+                "PRAGMA table_info(transactions)"
+            )
+        }
+
+        if "manual_override" not in columns:
+            conn.execute("""
+                ALTER TABLE transactions
+                ADD COLUMN manual_override INTEGER NOT NULL DEFAULT 0
+            """)
+
+            # Protect classifications in existing records.
+            conn.execute("""
+                UPDATE transactions
+                SET manual_override = 1
+            """)
+
+        # Track bank changes requiring manual review.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sync_conflicts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                transaction_id INTEGER,
+                account_id TEXT NOT NULL,
+                external_id TEXT NOT NULL,
+                change_type TEXT NOT NULL,
+                old_data TEXT,
+                new_data TEXT,
+                detected_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                resolved INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+
 
 
 def insert_transaction(transaction):

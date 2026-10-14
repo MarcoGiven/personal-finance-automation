@@ -23,6 +23,14 @@ SPREADSHEET_ID = os.getenv("GOOGLE_SPREADSHEET_ID")
 # Column AA stores our sync identifier.
 SYNC_COLUMN = "AA"
 
+# Income uses A:B; expenses continue to use C:E.
+INCOME_START_ROW = 17
+INCOME_END_ROW = 34
+
+# Separate tracking column so income and expenses
+# can occupy the same spreadsheet row.
+INCOME_SYNC_COLUMN = "AB"
+
 
 def transaction_key(transaction):
     """Create a stable identifier for a bank transaction."""
@@ -57,35 +65,50 @@ def get_month(transaction):
     return month_name[transaction_date.month]
 
 
-def read_sheet_rows(service, month):
-    """Read the expense table and sync identifiers."""
+
+def read_sheet_rows(service, month, transaction_type="expense"):
+    """Read a budget input table and its sync identifiers."""
+
+    if transaction_type == "income":
+        start_row = INCOME_START_ROW
+        end_row = INCOME_END_ROW
+        input_columns = "A:B"
+        sync_column = INCOME_SYNC_COLUMN
+
+    elif transaction_type == "expense":
+        start_row = EXPENSE_START_ROW
+        end_row = EXPENSE_END_ROW
+        input_columns = "C:E"
+        sync_column = SYNC_COLUMN
+
+    else:
+        raise ValueError("Unsupported transaction type")
+
+    start_col, end_col = input_columns.split(":")
 
     result = service.spreadsheets().values().batchGet(
         spreadsheetId=SPREADSHEET_ID,
         ranges=[
-            f"'{month}'!C{EXPENSE_START_ROW}:E{EXPENSE_END_ROW}",
-            f"'{month}'!{SYNC_COLUMN}{EXPENSE_START_ROW}:"
-            f"{SYNC_COLUMN}{EXPENSE_END_ROW}",
+            f"'{month}'!{start_col}{start_row}:"
+            f"{end_col}{end_row}",
+            f"'{month}'!{sync_column}{start_row}:"
+            f"{sync_column}{end_row}",
         ],
         valueRenderOption="UNFORMATTED_VALUE",
     ).execute()
 
-    ranges = result.get("valueRanges", [])
+    ranges = result["valueRanges"]
 
-    if len(ranges) != 2:
-        raise RuntimeError("Could not read spreadsheet ranges")
-
-    expense_rows = ranges[0].get("values", [])
+    input_rows = ranges[0].get("values", [])
     key_rows = ranges[1].get("values", [])
 
     rows = []
 
-    count = EXPENSE_END_ROW - EXPENSE_START_ROW + 1
-
-    for index in range(count):
-        expense = (
-            expense_rows[index]
-            if index < len(expense_rows) else []
+    for index in range(end_row - start_row + 1):
+        values = (
+            input_rows[index]
+            if index < len(input_rows)
+            else []
         )
 
         key = (
@@ -95,8 +118,8 @@ def read_sheet_rows(service, month):
         )
 
         rows.append({
-            "row": EXPENSE_START_ROW + index,
-            "values": expense,
+            "row": start_row + index,
+            "values": values,
             "key": str(key).strip(),
         })
 
@@ -104,51 +127,83 @@ def read_sheet_rows(service, month):
 
 
 
-def sync_transaction(service, transaction, write=False):
-    """Safely prepare or write one expense."""
 
-    if transaction["transaction_type"] != "expense":
+
+def sync_transaction(service, transaction, write=False):
+    """Synchronize one approved transaction to Google Sheets."""
+
+    transaction_type = transaction["transaction_type"]
+
+    if transaction_type not in ("expense", "income"):
         return "skipped_type"
 
-    # Prevent refunds and non-positive amounts from being
-    # exported until refund handling is implemented.
-    if transaction["amount_cents"] <= 0:
-        raise ValueError(
-            f"Cannot export non-positive expense: "
-            f"{transaction['id']}"
-        )
+    if transaction_type == "expense":
+        if transaction["category"] not in VALID_CATEGORIES:
+            return "skipped_category"
 
-    if transaction["category"] not in VALID_CATEGORIES:
-        return "skipped_category"
-
+    if transaction["amount_cents"] == 0:
+        raise ValueError("Cannot sync a zero-value transaction")
 
     month = get_month(transaction)
     key = transaction_key(transaction)
-    rows = read_sheet_rows(service, month)
 
-    # Check whether this transaction already exists.
+    rows = read_sheet_rows(service, month, transaction_type)
+
+    # Plaid outflows are positive, inflows negative.
+    # Google Sheets stores income as a positive amount.
+    if transaction_type == "income":
+        if transaction["amount_cents"] >= 0:
+            raise ValueError(
+                "Income must have a negative Plaid amount"
+            )
+
+        amount_cents = -transaction["amount_cents"]
+        start_col, end_col = "A", "B"
+        sync_column = INCOME_SYNC_COLUMN
+
+        values_to_write = [
+            transaction["description"],
+            amount_cents / 100,
+        ]
+
+    else:
+        amount_cents = transaction["amount_cents"]
+        start_col, end_col = "C", "E"
+        sync_column = SYNC_COLUMN
+
+        values_to_write = [
+            transaction["description"],
+            amount_cents / 100,
+            transaction["category"],
+        ]
+
+    expected_amount = Decimal(amount_cents) / 100
+
+    # Check the tracking column first.
     existing = next(
         (row for row in rows if row["key"] == key),
         None,
     )
 
     if existing:
-        expected_amount = (
-            Decimal(transaction["amount_cents"]) / 100
-        )
         values = existing["values"]
 
         valid = (
-            len(values) >= 3
+            len(values) == len(values_to_write)
             and str(values[0]) == transaction["description"]
             and Decimal(str(values[1])) == expected_amount
-            and str(values[2]) == transaction["category"]
         )
+
+        if transaction_type == "expense":
+            valid = (
+                valid
+                and str(values[2]) == transaction["category"]
+            )
 
         if not valid:
             raise RuntimeError(
-                f"Tracked transaction was modified in {month}, "
-                f"row {existing['row']}. Review manually."
+                f"Tracked transaction changed in "
+                f"{month}, row {existing['row']}"
             )
 
         if write:
@@ -160,7 +215,7 @@ def sync_transaction(service, transaction, write=False):
         )
         return "already_exists"
 
-    # Never overwrite existing user-entered data.
+    # Find a completely unused row.
     empty = next(
         (
             row for row in rows
@@ -174,73 +229,97 @@ def sync_transaction(service, transaction, write=False):
     )
 
     if empty is None:
-        raise RuntimeError(f"No empty expense rows in {month}")
+        raise RuntimeError(
+            f"No available {transaction_type} rows in {month}"
+        )
 
     row_number = empty["row"]
-    amount = transaction["amount_cents"] / 100
 
     print(
         f"{'[WRITE]' if write else '[PREVIEW]'} "
-        f"{month} row {row_number}: "
+        f"{month}, row {row_number}: "
         f"{transaction['description']} "
-        f"${amount:.2f} "
-        f"({transaction['category']})"
+        f"${expected_amount:.2f} "
+        f"({transaction_type})"
     )
 
     if not write:
         return "preview"
 
-    # Write the purchase and its tracking ID together.
+    input_range = (
+        f"'{month}'!{start_col}{row_number}:"
+        f"{end_col}{row_number}"
+    )
+
+    key_range = f"'{month}'!{sync_column}{row_number}"
+
+    # Re-read the target row immediately before writing.
+    fresh_rows = read_sheet_rows(
+        service, month, transaction_type
+    )
+    target = next(
+        row for row in fresh_rows
+        if row["row"] == row_number
+    )
+
+    if target["key"] or any(
+        str(v).strip() for v in target["values"]
+    ):
+        raise RuntimeError(
+            "Destination was changed before writing"
+        )
+
     service.spreadsheets().values().batchUpdate(
         spreadsheetId=SPREADSHEET_ID,
         body={
             "valueInputOption": "USER_ENTERED",
             "data": [
                 {
-                    "range": f"'{month}'!C{row_number}:E{row_number}",
-                    "values": [[
-                        transaction["description"],
-                        amount,
-                        transaction["category"],
-                    ]],
+                    "range": input_range,
+                    "values": [values_to_write],
                 },
                 {
-                    "range": (
-                        f"'{month}'!{SYNC_COLUMN}{row_number}"
-                    ),
+                    "range": key_range,
                     "values": [[key]],
                 },
             ],
         },
     ).execute()
 
-    # Verify that the write is actually present.
-    updated_rows = read_sheet_rows(service, month)
+    # Verify the transaction before updating SQLite.
+    updated_rows = read_sheet_rows(
+        service, month, transaction_type
+    )
+
     updated = next(
         row for row in updated_rows
         if row["row"] == row_number
     )
 
-    if updated["key"] != key:
-        raise RuntimeError(
-            "Sync verification failed. Database status unchanged."
+    actual = updated["values"]
+
+    valid = (
+        updated["key"] == key
+        and len(actual) == len(values_to_write)
+        and str(actual[0]) == transaction["description"]
+        and Decimal(str(actual[1])) == expected_amount
+    )
+
+    if transaction_type == "expense":
+        valid = (
+            valid
+            and str(actual[2]) == transaction["category"]
         )
 
-    values = updated["values"]
-    if not (
-        len(values) >= 3
-        and str(values[0]) == transaction["description"]
-        and Decimal(str(values[1])) == Decimal(amount).quantize(
-            Decimal("0.01")
-        )
-        and str(values[2]) == transaction["category"]
-    ):
+    if not valid:
         raise RuntimeError(
-            "Expense verification failed. Database status unchanged."
+            "Spreadsheet verification failed. "
+            "Database status unchanged."
         )
 
     mark_synced(transaction["id"])
     return "synced"
+
 
 
 def main():
