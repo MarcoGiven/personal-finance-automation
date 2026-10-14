@@ -1,18 +1,36 @@
+# Credentials and authentication
+.env
+.env.*
+!.env.example
+credentials.json
+token.json
+*.pem
+*.key
+
 # Financial data
 data/
 *.db
 *.db-journal
 *.db-wal
 *.db-shm
-/scripts
+*.sqlite
+*.sqlite3
+*.enc
 
-# Google authentication
-credentials.json
-token.json
-
-# Environment
-.env
+# Python
 .venv/
+venv/
 __pycache__/
+*.py[cod]
 .pytest_cache/
-backups/
+.coverage
+htmlcov/
+
+# Development files
+.DS_Store
+.vscode/
+.idea/
+
+# Temporary files and backups
+*.bak
+*.backup
