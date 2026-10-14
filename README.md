@@ -3,8 +3,6 @@
 
 This is a python based tool that automatically retrieves bank transactions from multiple accounts connected through plaid. It'll categorize recurring/expected expenses, and push reviewed transactions to a google sheets budgeting page. I put together this project to automate my existing budgeting workflow, without replacing the spreadsheet I already use. Rather than manually entering transactions from multiple accounts each week, the application consolidates them into a single review interface, where I can categorize spending, approve transactions, and update my budget
 
-<h2>Demo</h2>
-
 <table>
   <tr>
     <td width="50%" align="center">
