@@ -113,26 +113,6 @@
 
         .error { color: #b42318; }
         .success { color: #067647; }
-
-        #transactionBody td:nth-child(3) {
-            min-width: 180px;
-            max-width: 280px;
-            overflow-wrap: anywhere;
-        }
-
-        #transactionBody td:nth-child(4) {
-            min-width: 170px;
-            max-width: 220px;
-            overflow-wrap: anywhere;
-        }
-
-        #transactionBody td:nth-child(7) {
-            min-width: 170px;
-        }
-
-        #transactionBody td:nth-child(9) {
-            min-width: 125px;
-        }
     </style>
 </head>
 
@@ -173,8 +153,29 @@
             </div>
         </div>
 
+        <div class="toolbar" style="justify-content: flex-start;">
+            <button id="fetchTransactionsButton" class="primary">Fetch Transactions</button>
+            <button id="syncSheetsButton">Sync to Google Sheets</button>
+            <span class="muted">Fetch → review and approve → sync</span>
+        </div>
         <div id="message"></div>
+        <details id="workflowDetails" style="margin: 12px 0 16px;">
+            <summary style="cursor: pointer; font-size: 13px; color: #475467;">
+                Show command output
+            </summary>
 
+            <pre id="workflowOutput" style="
+                max-height: 240px;
+                overflow: auto;
+                padding: 12px;
+                background: white;
+                border: 1px solid #e0e4e8;
+                border-radius: 8px;
+                font-size: 12px;
+                white-space: pre-wrap;
+                overflow-wrap: anywhere;
+            "></pre>
+        </details>
         <div class="panel">
             <table>
                 <thead>
@@ -692,6 +693,68 @@
             loadConflicts;
 
         loadConflicts();
+
+        // The backend uses the existing Python CLIs; only POST invokes a write.
+        async function runWorkflow(path, payload, button, label) {
+            const fetchButton = document.getElementById("fetchTransactionsButton");
+            const syncButton = document.getElementById("syncSheetsButton");
+            const output = document.getElementById("workflowOutput");
+            fetchButton.disabled = true;
+            syncButton.disabled = true;
+            button.textContent = label;
+            output.style.display = "block";
+            output.textContent = "Running…";
+            document.getElementById("workflowDetails").open = false;
+            showMessage(label);
+            try {
+                const result = await api(path, {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify(payload)
+                });
+                output.textContent = result.output || "Completed.";
+                showMessage("Completed successfully.");
+                await loadTransactions();
+                await loadConflicts();
+            } catch (error) {
+                output.textContent = error.message;
+                showMessage(error.message, true);
+            } finally {
+                fetchButton.disabled = false;
+                syncButton.disabled = false;
+                button.textContent = button.dataset.originalLabel;
+            }
+        }
+
+        const fetchTransactionsButton = document.getElementById("fetchTransactionsButton");
+        const syncSheetsButton = document.getElementById("syncSheetsButton");
+        fetchTransactionsButton.dataset.originalLabel = fetchTransactionsButton.textContent;
+        syncSheetsButton.dataset.originalLabel = syncSheetsButton.textContent;
+
+        fetchTransactionsButton.onclick = () => runWorkflow(
+            "/api/workflow/fetch", {}, fetchTransactionsButton, "Fetching transactions…"
+        );
+
+        syncSheetsButton.onclick = () => {
+            const monthValue = document.getElementById("monthFilter").value;
+            if (!monthValue) {
+                showMessage("Choose one month before syncing.", true);
+                return;
+            }
+            const [year, monthNumber] = monthValue.split("-");
+            if (year !== "2026") {
+                showMessage("Only the 2026 budget is configured.", true);
+                return;
+            }
+            const month = new Date(Date.UTC(Number(year), Number(monthNumber) - 1, 1))
+                .toLocaleString("en-US", {month: "long", timeZone: "UTC"});
+            if (!confirm(`Write all approved ${month} transactions to Google Sheets?`)) {
+                return;
+            }
+            runWorkflow(
+                "/api/workflow/sync", {month}, syncSheetsButton, "Syncing to Sheets…"
+            );
+        };
 
         document.getElementById("monthFilter").onchange = () => {
             loadTransactions().catch(error =>
