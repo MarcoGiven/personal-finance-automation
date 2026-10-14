@@ -1,4 +1,4 @@
-
+import re
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException
@@ -41,27 +41,34 @@ def get_transaction(conn, transaction_id):
 def list_transactions(
     status: Literal[
         "pending", "ready", "synced", "excluded", "all"
-    ] = "pending"
+    ] = "pending",
+    month: str | None = None,
 ):
+    if month and not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
+        raise HTTPException(
+            400, "Month must be in YYYY-MM format"
+        )
+
+    query = "SELECT * FROM transactions WHERE 1=1"
+    parameters = []
+
+    if status != "all":
+        query += " AND status = ?"
+        parameters.append(status)
+
+    if month:
+        query += " AND date LIKE ?"
+        parameters.append(f"{month}-%")
+
+    query += " ORDER BY date DESC, id DESC"
+
     with get_connection() as conn:
-        if status == "all":
-            rows = conn.execute(
-                """
-                SELECT * FROM transactions
-                ORDER BY date DESC, id DESC
-                """
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                """
-                SELECT * FROM transactions
-                WHERE status = ?
-                ORDER BY date DESC, id DESC
-                """,
-                (status,),
-            ).fetchall()
+        rows = conn.execute(
+            query, parameters
+        ).fetchall()
 
     return [dict(row) for row in rows]
+
 
 
 @router.patch("/transactions/{transaction_id}")

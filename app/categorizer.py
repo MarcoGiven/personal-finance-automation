@@ -1,53 +1,44 @@
 
 import re
 
+
+# Predictable merchants and recurring expenses only.
 CATEGORY_RULES = {
     "Food & Groceries": [
-        "jack fergies",
-        "wawa",
-        "wegmans",
+        "fresh grocer",
         "aldi",
+        "wegmans",
         "trader joe",
         "whole foods",
-        "chipotle",
+        "acme market",
     ],
     "Utilities": [
         "peco",
         "verizon",
-        "septa",
-        "pwg",
+        "philadelphia gas works",
     ],
     "Subscriptions": [
+        "crunch fitness",
+        "movement",
         "spotify",
         "netflix",
-        "crunch membership",
-        "movement subscription",
-        "apple.com/bill",
-    ],
-    "Entertainment": [
-        "steam",
-        "amc theatres",
-        "ticketmaster",
-    ],
-    "Shopping": [
-        "amazon",
-        "target",
-        "best buy",
     ],
 }
 
+
+# Recognizable credit card payments.
+# Ambiguous person-to-person payments are NOT transfers
+# by default; they require review.
 TRANSFER_KEYWORDS = [
-    "payment thank you",
     "credit card payment",
+    "payment thank you",
     "autopay payment",
-    "online payment to credit card",
-    "transfer to savings",
-    "transfer from savings",
+    "discover des:e-payment",
+    "capital one des:mobile pmt",
 ]
 
 
 def normalize_description(description):
-    """Standardize merchant descriptions for matching."""
     description = description.casefold()
     description = re.sub(r"\s+", " ", description)
     return description.strip()
@@ -58,11 +49,10 @@ def categorize_transaction(description):
 
     for keyword in TRANSFER_KEYWORDS:
         if keyword in normalized:
-            return "Transfer", "transfer"
+            return None, "transfer"
 
     for category, keywords in CATEGORY_RULES.items():
-        for keyword in keywords:
-            if keyword in normalized:
-                return category, "expense"
+        if any(keyword in normalized for keyword in keywords):
+            return category, "expense"
 
     return None, "expense"

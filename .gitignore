@@ -4,6 +4,7 @@ data/
 *.db-journal
 *.db-wal
 *.db-shm
+/scripts
 
 # Google authentication
 credentials.json

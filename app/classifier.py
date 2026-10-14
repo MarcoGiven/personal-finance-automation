@@ -84,7 +84,8 @@ def classify_transaction(transaction, account):
         ):
             return "income", None, amount
 
-        # Unknown incoming money: don't assume it's income.
+        # Unknown incoming payments require review.
+        # Do not assume they're income or confirmed transfers.
         return "transfer", None, amount
 
     # 7. Outgoing purchases

@@ -29,7 +29,7 @@ def test_credit_card_purchase():
 
     result = classify_transaction(txn, account)
 
-    assert result == ("expense", "Entertainment", 25.00)
+    assert result == ("expense", None, 25.00)
 
 
 def test_credit_card_payment():

@@ -25,7 +25,8 @@
         header h1 { margin: 0; font-size: 24px; }
 
         main {
-            max-width: 1200px;
+            width: 95%;
+            max-width: 1800px;
             margin: 30px auto;
             padding: 0 20px;
         }
@@ -54,6 +55,7 @@
 
         table {
             width: 100%;
+            min-width: 1250px;
             border-collapse: collapse;
         }
 
@@ -111,6 +113,26 @@
 
         .error { color: #b42318; }
         .success { color: #067647; }
+
+        #transactionBody td:nth-child(3) {
+            min-width: 180px;
+            max-width: 280px;
+            overflow-wrap: anywhere;
+        }
+
+        #transactionBody td:nth-child(4) {
+            min-width: 170px;
+            max-width: 220px;
+            overflow-wrap: anywhere;
+        }
+
+        #transactionBody td:nth-child(7) {
+            min-width: 170px;
+        }
+
+        #transactionBody td:nth-child(9) {
+            min-width: 125px;
+        }
     </style>
 </head>
 
@@ -123,6 +145,14 @@
     <main>
         <div class="toolbar">
             <div class="actions">
+                <label for="monthFilter">Month:</label>
+                <select id="monthFilter">
+                    <option value="2026-10">October 2026</option>
+                    <option value="2026-09">September 2026</option>
+                    <option value="2026-08">August 2026</option>
+                    <option value="2026-07">July 2026</option>
+                    <option value="">All Months</option>
+                </select>
                 <label for="statusFilter">Show:</label>
                 <select id="statusFilter">
                     <option value="pending">Pending Review</option>
@@ -310,10 +340,34 @@
                     transaction.category
                 );
 
+                // Only expenses have a budget category. Incoming transfers
+                // can optionally select a category for the Reimbursement action.
+                const categoryCell = document.createElement("div");
+                const categoryPlaceholder = document.createElement("span");
+                categoryPlaceholder.textContent = "—";
+                categoryPlaceholder.className = "muted";
+
                 function toggleCategory() {
-                    categorySelect.disabled =
-                        typeSelect.value !== "expense" &&
-                        transaction.amount_cents >= 0;
+                    const isExpense = typeSelect.value === "expense";
+                    const isIncomingTransfer =
+                        typeSelect.value === "transfer" &&
+                        transaction.amount_cents < 0;
+
+                    categoryCell.replaceChildren();
+
+                    if (isExpense || isIncomingTransfer) {
+                        categorySelect.disabled =
+                            transaction.status === "synced" ||
+                            transaction.status === "excluded";
+                        categorySelect.options[0].textContent =
+                            isIncomingTransfer
+                                ? "Reimbursement category…"
+                                : "Uncategorized";
+                        categoryCell.appendChild(categorySelect);
+                    } else {
+                        categorySelect.disabled = true;
+                        categoryCell.appendChild(categoryPlaceholder);
+                    }
                 }
 
                 typeSelect.onchange = toggleCategory;
@@ -358,6 +412,7 @@
 
                 if (
                     transaction.amount_cents < 0 &&
+                    transaction.transaction_type !== "income" &&
                     transaction.status !== "synced" &&
                     transaction.status !== "excluded"
                 ) {
@@ -413,7 +468,7 @@
                     transaction.account_id,
                     formatAmount(transaction),
                     typeSelect,
-                    categorySelect,
+                    categoryCell,
                     transaction.status,
                     actionContainer
                 ];
@@ -447,9 +502,12 @@
 
         async function loadTransactions() {
             const status = encodeURIComponent(filter.value);
+            const month = encodeURIComponent(
+                document.getElementById("monthFilter").value
+            );
 
             transactions = await api(
-                `/api/review/transactions?status=${status}`
+                `/api/review/transactions?status=${status}&month=${month}`
             );
 
             selected.clear();
@@ -634,6 +692,12 @@
             loadConflicts;
 
         loadConflicts();
+
+        document.getElementById("monthFilter").onchange = () => {
+            loadTransactions().catch(error =>
+                showMessage(error.message, true)
+            );
+        };
 
     </script>
 </body>
