@@ -131,6 +131,23 @@ def read_sheet_rows(service, month, transaction_type="expense"):
 
 def sync_transaction(service, transaction, write=False):
     """Synchronize one approved transaction to Google Sheets."""
+    with get_connection() as conn:
+        conflict = conn.execute(
+            """
+            SELECT id
+            FROM sync_conflicts
+            WHERE transaction_id = ?
+            AND resolved = 0
+            LIMIT 1
+            """,
+            (transaction["id"],),
+        ).fetchone()
+
+    if conflict:
+        raise RuntimeError(
+            f"Transaction {transaction['id']} has an "
+            "unresolved Plaid conflict."
+        )
 
     transaction_type = transaction["transaction_type"]
 

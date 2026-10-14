@@ -96,7 +96,8 @@ def update_transaction(
             UPDATE transactions
             SET category = ?,
                 transaction_type = ?,
-                status = 'pending'
+                status = 'pending',
+                manual_override = 1
             WHERE id = ?
             """,
             (
@@ -153,7 +154,8 @@ def approve_transactions(request: ApprovalRequest):
             conn.execute(
                 """
                 UPDATE transactions
-                SET status = 'ready'
+                SET status = 'ready',
+                    manual_override = 1
                 WHERE id = ?
                 """,
                 (transaction_id,),
@@ -183,7 +185,8 @@ def hold_transactions(request: ApprovalRequest):
             conn.execute(
                 """
                 UPDATE transactions
-                SET status = 'pending'
+                SET status = 'pending',
+                    manual_override = 1
                 WHERE id = ?
                 """,
                 (transaction_id,),
@@ -220,7 +223,8 @@ def exclude_transactions(request: ApprovalRequest):
             conn.execute(
                 """
                 UPDATE transactions
-                SET status = 'excluded'
+                SET status = 'excluded',
+                    manual_override = 1
                 WHERE id = ?
                 """,
                 (transaction_id,),
@@ -266,7 +270,8 @@ def mark_reimbursement(
             SET description = ?,
                 transaction_type = 'expense',
                 category = ?,
-                status = 'pending'
+                status = 'pending',
+                manual_override = 1
             WHERE id = ?
             """,
             (

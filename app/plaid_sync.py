@@ -14,6 +14,8 @@ from app.database import initialize_database, get_connection
 from app.categorizer import categorize_transaction
 from plaid.model.accounts_get_request import AccountsGetRequest
 from app.classifier import classify_transaction
+from app.database import get_connection
+from app.classifier import classify_transaction
 
 
 def to_cents(amount):
@@ -117,21 +119,78 @@ def collect_changes(client, access_token, starting_cursor):
             raise
 
 
+
 def apply_changes(added, modified, removed, accounts):
-    """Update SQLite using Plaid's transaction changes."""
+    """Apply Plaid changes without overwriting reviewed transactions."""
+
+    def record_conflict(conn, existing, change_type, new_data):
+        """Record unresolved bank changes for later review."""
+
+        new_json = json.dumps(new_data, sort_keys=True)
+
+        duplicate = conn.execute(
+            """
+            SELECT id
+            FROM sync_conflicts
+            WHERE account_id = ?
+              AND external_id = ?
+              AND change_type = ?
+              AND new_data = ?
+              AND resolved = 0
+            LIMIT 1
+            """,
+            (
+                existing["account_id"],
+                existing["external_id"],
+                change_type,
+                new_json,
+            ),
+        ).fetchone()
+
+        if duplicate:
+            return
+
+        conn.execute(
+            """
+            INSERT INTO sync_conflicts (
+                transaction_id,
+                account_id,
+                external_id,
+                change_type,
+                old_data,
+                new_data
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                existing["id"],
+                existing["account_id"],
+                existing["external_id"],
+                change_type,
+                json.dumps(dict(existing), sort_keys=True),
+                new_json,
+            ),
+        )
+
+        print(
+            f"REVIEW REQUIRED: {change_type} — "
+            f"{existing['description']}"
+        )
 
     with get_connection() as conn:
         for transaction in added + modified:
 
-            # Wait for pending transactions to post.
+            # Don't import temporary pending authorizations.
             if transaction.pending:
                 continue
 
-            normalized = normalize_transaction(transaction, accounts)
+            normalized = normalize_transaction(
+                transaction, accounts
+            )
 
             existing = conn.execute(
                 """
-                SELECT id, status
+                SELECT *
                 FROM transactions
                 WHERE source = 'plaid'
                   AND account_id = ?
@@ -143,34 +202,7 @@ def apply_changes(added, modified, removed, accounts):
                 ),
             ).fetchone()
 
-            if existing:
-                if existing["status"] == "synced":
-                    raise RuntimeError(
-                        "A transaction already exported to Sheets "
-                        "has changed. Manual reconciliation required."
-                    )
-
-                conn.execute(
-                    """
-                    UPDATE transactions
-                    SET date = ?,
-                        description = ?,
-                        amount_cents = ?,
-                        category = ?,
-                        transaction_type = ?,
-                        status = 'pending'
-                    WHERE id = ?
-                    """,
-                    (
-                        normalized["date"],
-                        normalized["description"],
-                        normalized["amount_cents"],
-                        normalized["category"],
-                        normalized["transaction_type"],
-                        existing["id"],
-                    ),
-                )
-            else:
+            if existing is None:
                 conn.execute(
                     """
                     INSERT INTO transactions (
@@ -189,34 +221,104 @@ def apply_changes(added, modified, removed, accounts):
                         normalized["amount_cents"],
                         normalized["category"],
                         normalized["transaction_type"],
-                        normalized["status"],
+                        "pending",
                     ),
                 )
-
-        for removal in removed:
-            existing = conn.execute(
-                """
-                SELECT id, status
-                FROM transactions
-                WHERE source = 'plaid'
-                  AND external_id = ?
-                """,
-                (removal.transaction_id,),
-            ).fetchone()
-
-            if not existing:
                 continue
 
-            if existing["status"] == "synced":
+            amount_changed = (
+                existing["amount_cents"]
+                != normalized["amount_cents"]
+            )
+            date_changed = (
+                existing["date"] != normalized["date"]
+            )
+
+            protected = (
+                existing["manual_override"] == 1
+                or existing["status"] in (
+                    "ready", "synced", "excluded"
+                )
+            )
+
+            if protected:
+                if amount_changed or date_changed:
+                    record_conflict(
+                        conn,
+                        existing,
+                        "modified",
+                        normalized,
+                    )
+
+                # Preserve manual categories, transaction
+                # types, descriptions, and statuses.
+                continue
+
+            # Unreviewed transactions may be updated.
+            conn.execute(
+                """
+                UPDATE transactions
+                SET date = ?,
+                    description = ?,
+                    amount_cents = ?,
+                    category = ?,
+                    transaction_type = ?
+                WHERE id = ?
+                """,
+                (
+                    normalized["date"],
+                    normalized["description"],
+                    normalized["amount_cents"],
+                    normalized["category"],
+                    normalized["transaction_type"],
+                    existing["id"],
+                ),
+            )
+
+        for removal in removed:
+            account_id = getattr(removal, "account_id", None)
+
+            if not account_id:
                 raise RuntimeError(
-                    "Previously exported transaction was removed. "
-                    "Manual reconciliation required."
+                    "Removed transaction has no account ID."
                 )
 
+            existing = conn.execute(
+                """
+                SELECT *
+                FROM transactions
+                WHERE source = 'plaid'
+                  AND account_id = ?
+                  AND external_id = ?
+                """,
+                (account_id, removal.transaction_id),
+            ).fetchone()
+
+            if existing is None:
+                continue
+
+            protected = (
+                existing["manual_override"] == 1
+                or existing["status"] in (
+                    "ready", "synced", "excluded"
+                )
+            )
+
+            if protected:
+                record_conflict(
+                    conn,
+                    existing,
+                    "removed",
+                    {"transaction_id": removal.transaction_id},
+                )
+                continue
+
+            # Only delete transactions never manually reviewed.
             conn.execute(
                 "DELETE FROM transactions WHERE id = ?",
                 (existing["id"],),
             )
+
 
 
 def sync_item(client, item_id, connection, write=False):
