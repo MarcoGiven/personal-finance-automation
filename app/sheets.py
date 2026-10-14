@@ -21,7 +21,7 @@ TOKEN_FILE = BASE_DIR / "token.json"
 
 # Existing spreadsheet structure
 EXPENSE_START_ROW = 17
-EXPENSE_END_ROW = 45
+EXPENSE_END_ROW = 150
 
 VALID_CATEGORIES = {
     "Food & Groceries",

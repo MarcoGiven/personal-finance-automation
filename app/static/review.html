@@ -136,6 +136,7 @@
                 <label for="statusFilter">Show:</label>
                 <select id="statusFilter">
                     <option value="pending">Pending Review</option>
+                    <option value="processing">Processing</option>
                     <option value="ready">Approved</option>
                     <option value="synced">Synced</option>
                     <option value="excluded">Excluded</option>
@@ -287,15 +288,16 @@
 
             const selectedRows = transactions.filter(t => selected.has(t.id));
             const hasSelection = selectedRows.length > 0;
-
+            const isProcessing = filter.value === "processing";
+            document.getElementById("selectAll").disabled = isProcessing;
             document.getElementById("approveButton").disabled =
-                !hasSelection || selectedRows.some(t => t.status === "synced");
+                isProcessing || !hasSelection || selectedRows.some(t => t.status === "synced");
 
             document.getElementById("holdButton").disabled =
-                !hasSelection || selectedRows.some(t => t.status === "synced");
+                isProcessing || !hasSelection || selectedRows.some(t => t.status === "synced");
 
             document.getElementById("excludeButton").disabled =
-                !hasSelection || selectedRows.some(
+                isProcessing || !hasSelection || selectedRows.some(
                     t => t.status === "synced" ||
                         t.status === "excluded"
                 );
@@ -324,7 +326,8 @@
                 const checkbox = document.createElement("input");
                 checkbox.type = "checkbox";
                 checkbox.checked = selected.has(transaction.id);
-                checkbox.disabled = transaction.status === "synced";
+                checkbox.disabled = transaction.status === "synced" ||
+                    transaction.status === "processing";
                 checkbox.onchange = () => {
                     if (checkbox.checked) selected.add(transaction.id);
                     else selected.delete(transaction.id);
@@ -462,6 +465,22 @@
                 }
 
 
+                // Processing records are informational only, not editable.
+                if (transaction.status === "processing") {
+                    const cells = [
+                        "—", transaction.date, transaction.description,
+                        transaction.account_name, formatAmount(transaction),
+                        transaction.transaction_type, "—", "Processing", "—"
+                    ];
+                    for (const value of cells) {
+                        const td = document.createElement("td");
+                        td.textContent = String(value);
+                        tr.appendChild(td);
+                    }
+                    body.appendChild(tr);
+                    continue;
+                }
+
                 const cells = [
                     checkbox,
                     transaction.date,
@@ -561,7 +580,7 @@
 
             if (event.target.checked) {
                 transactions.forEach(t => {
-                    if (t.status !== "synced") selected.add(t.id);
+                    if (t.status !== "synced" && t.status !== "processing") selected.add(t.id);
                 });
             }
 

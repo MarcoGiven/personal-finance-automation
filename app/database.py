@@ -75,6 +75,19 @@ def initialize_database():
                 SET manual_override = 1
             """)
 
+        # Plaid authorizations: never eligible for Sheets export.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS processing_transactions (
+                account_id TEXT NOT NULL,
+                external_id TEXT NOT NULL,
+                date TEXT NOT NULL,
+                description TEXT NOT NULL,
+                amount_cents INTEGER NOT NULL,
+                transaction_type TEXT NOT NULL,
+                PRIMARY KEY (account_id, external_id)
+            )
+        """)
+
         # Track bank changes requiring manual review.
         conn.execute("""
             CREATE TABLE IF NOT EXISTS sync_conflicts (

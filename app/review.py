@@ -41,7 +41,7 @@ def get_transaction(conn, transaction_id):
 @router.get("/transactions")
 def list_transactions(
     status: Literal[
-        "pending", "ready", "synced", "excluded", "all"
+        "pending", "processing", "ready", "synced", "excluded", "all"
     ] = "pending",
     month: str | None = None,
 ):
@@ -49,6 +49,30 @@ def list_transactions(
         raise HTTPException(
             400, "Month must be in YYYY-MM format"
         )
+
+    if status == "processing":
+        query = "SELECT * FROM processing_transactions WHERE 1=1"
+        params = []
+        if month:
+            query += " AND date LIKE ?"
+            params.append(f"{month}-%")
+        query += " ORDER BY date DESC, external_id DESC"
+        with get_connection() as conn:
+            rows = conn.execute(query, params).fetchall()
+        account_names = get_account_names()
+        return [
+            {
+                "id": f"processing:{row['external_id']}",
+                "date": row["date"],
+                "description": row["description"],
+                "amount_cents": row["amount_cents"],
+                "transaction_type": row["transaction_type"],
+                "category": None,
+                "status": "processing",
+                "account_name": account_names.get(row["account_id"], "Unknown Account"),
+            }
+            for row in rows
+        ]
 
     query = "SELECT * FROM transactions WHERE 1=1"
     parameters = []

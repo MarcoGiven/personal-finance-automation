@@ -25,7 +25,7 @@ SYNC_COLUMN = "AA"
 
 # Income uses A:B; expenses continue to use C:E.
 INCOME_START_ROW = 17
-INCOME_END_ROW = 34
+INCOME_END_ROW = 100
 
 # Separate tracking column so income and expenses
 # can occupy the same spreadsheet row.

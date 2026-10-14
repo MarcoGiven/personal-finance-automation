@@ -1,9 +1,12 @@
 
 import argparse
 import json
+from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
 from plaid.exceptions import ApiException
+from plaid.model.transactions_get_request import TransactionsGetRequest
+from plaid.model.transactions_get_request_options import TransactionsGetRequestOptions
 from plaid.model.transactions_sync_request import (
     TransactionsSyncRequest,
 )
@@ -118,6 +121,75 @@ def collect_changes(client, access_token, starting_cursor):
 
             raise
 
+
+
+def fetch_processing_snapshot(client, access_token):
+    """Read all still-pending authorizations from Plaid over the last 90 days.
+
+    Separate from the saved /transactions/sync cursor: previously skipped
+    pending records can be recovered without rewinding that cursor.
+    """
+    end = date.today()
+    start = end - timedelta(days=90)
+    pending = []
+    offset = 0
+    while True:
+        response = client.transactions_get(TransactionsGetRequest(
+            access_token=access_token,
+            start_date=start,
+            end_date=end,
+            options=TransactionsGetRequestOptions(count=100, offset=offset),
+        ))
+        pending.extend(t for t in response.transactions if t.pending)
+        count = len(response.transactions)
+        offset += count
+        if offset >= response.total_transactions:
+            break
+        if not count:
+            raise RuntimeError("Plaid transaction pagination stopped early")
+    return pending
+
+
+def save_processing_snapshot(accounts, pending, posted):
+    """Atomically replace pending records for one Item's accounts."""
+    # A pending authorization may be replaced by a posted transaction with
+    # a DIFFERENT ID. Never show both when Plaid provides the link.
+    superseded_ids = {
+        t.pending_transaction_id
+        for t in posted
+        if not t.pending and getattr(t, "pending_transaction_id", None)
+    }
+    account_ids = tuple(accounts.keys())
+    with get_connection() as conn:
+        for account_id in account_ids:
+            conn.execute(
+                "DELETE FROM processing_transactions WHERE account_id = ?",
+                (account_id,),
+            )
+        for transaction in pending:
+            if transaction.account_id not in accounts:
+                continue
+            if transaction.transaction_id in superseded_ids:
+                continue
+            normalized = normalize_transaction(transaction, accounts)
+            # No processing entry for a transaction already stored as posted.
+            present = conn.execute(
+                """SELECT 1 FROM transactions
+                   WHERE source = 'plaid' AND account_id = ? AND external_id = ?""",
+                (transaction.account_id, transaction.transaction_id),
+            ).fetchone()
+            if present:
+                continue
+            conn.execute(
+                """INSERT INTO processing_transactions
+                   (account_id, external_id, date, description,
+                    amount_cents, transaction_type)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (normalized["account_id"], normalized["external_id"],
+                 normalized["date"], normalized["description"],
+                 normalized["amount_cents"], normalized["transaction_type"]),
+            )
+    return len(pending)
 
 
 def apply_changes(added, modified, removed, accounts):
@@ -346,10 +418,16 @@ def sync_item(client, item_id, connection, write=False):
         print("Preview only — SQLite unchanged.")
         return
 
-    # Save transactions before advancing the cursor.
+    # Fetch staging data independently of the incremental cursor.
+    # If Plaid fails, leave the cursor and processing snapshot untouched.
+    processing = fetch_processing_snapshot(client, connection["access_token"])
+
+    # Commit posted changes before advancing the cursor.
     apply_changes(added, modified, removed, accounts)
+    count = save_processing_snapshot(accounts, processing, added + modified)
     save_cursor(item_id, new_cursor)
 
+    print(f"Processing transactions observed: {count}")
     print("Transactions imported and cursor saved.")
 
 
