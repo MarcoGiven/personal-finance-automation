@@ -6,11 +6,13 @@ from fastapi.responses import FileResponse
 
 from app.plaid_link import router as plaid_router
 from app.review import router as review_router
+from app.conflicts import router as conflicts_router
 
 app = FastAPI(title="Personal Finance Automation")
 
 app.include_router(plaid_router)
 app.include_router(review_router)
+app.include_router(conflicts_router)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 

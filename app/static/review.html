@@ -163,6 +163,40 @@
                 <tbody id="transactionBody"></tbody>
             </table>
         </div>
+
+        <section style="margin-top: 32px;">
+            <div class="toolbar">
+                <div>
+                    <h2 style="margin: 0;">Plaid Conflicts</h2>
+                    <p class="muted">
+                        Bank updates requiring manual review
+                    </p>
+                </div>
+
+                <button id="refreshConflicts">
+                    Refresh Conflicts
+                </button>
+            </div>
+
+            <div class="panel">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Transaction</th>
+                            <th>Change</th>
+                            <th>Stored</th>
+                            <th>New Bank Data</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="conflictsBody">
+                        <tr>
+                            <td colspan="5">Loading conflicts...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
     </main>
 
     <script>
@@ -484,6 +518,123 @@
         loadTransactions().catch(error =>
             showMessage(error.message, true)
         );
+
+        
+        function money(cents) {
+            if (cents === null || cents === undefined) {
+                return "—";
+            }
+
+            const amount = Number(cents) / 100;
+            return `${amount < 0 ? "-" : ""}$${Math.abs(amount).toFixed(2)}`;
+        }
+
+        async function loadConflicts() {
+            const tbody = document.getElementById("conflictsBody");
+            tbody.replaceChildren();
+
+            try {
+                const conflicts = await api("/api/conflicts");
+
+                if (conflicts.length === 0) {
+                    const row = tbody.insertRow();
+                    const cell = row.insertCell();
+                    cell.colSpan = 5;
+                    cell.textContent = "No unresolved Plaid conflicts.";
+                    return;
+                }
+
+                for (const conflict of conflicts) {
+                    const row = tbody.insertRow();
+
+                    const newData = conflict.new_data || {};
+                    const oldData = conflict.old_data || {};
+
+                    const details = [
+                        conflict.description || oldData.description || "Unknown",
+                        conflict.change_type,
+                        `${money(oldData.amount_cents)} (${oldData.date || "—"})`,
+                        conflict.change_type === "removed"
+                            ? "Removed by Plaid"
+                            : `${money(newData.amount_cents)} (${newData.date || "—"})`,
+                    ];
+
+                    for (const detail of details) {
+                        const cell = row.insertCell();
+                        cell.textContent = detail;
+                    }
+
+                    const actionCell = row.insertCell();
+
+                    function addButton(label, action) {
+                        const button = document.createElement("button");
+                        button.textContent = label;
+                        button.style.margin = "3px";
+
+                        button.onclick = async () => {
+                            let confirmed;
+
+                            if (action === "confirm_reconciled") {
+                                confirmed = confirm(
+                                    "Have you manually reconciled this " +
+                                    "transaction in Google Sheets?"
+                                );
+                            } else {
+                                confirmed = confirm(
+                                    `${label} for ${conflict.description}?`
+                                );
+                            }
+
+                            if (!confirmed) return;
+
+                            button.disabled = true;
+
+                            try {
+                                await api(
+                                    `/api/conflicts/${conflict.id}/resolve`,
+                                    {
+                                        method: "POST",
+                                        headers: {
+                                            "Content-Type": "application/json"
+                                        },
+                                        body: JSON.stringify({action})
+                                    }
+                                );
+
+                                showMessage("Conflict resolved.");
+                                await loadConflicts();
+                                await loadTransactions();
+
+                            } catch (error) {
+                                showMessage(error.message, true);
+                                button.disabled = false;
+                            }
+                        };
+
+                        actionCell.appendChild(button);
+                    }
+
+                    if (conflict.status === "synced") {
+                        addButton(
+                            "Confirm Reconciled",
+                            "confirm_reconciled"
+                        );
+                    } else {
+                        addButton("Accept Plaid", "accept_plaid");
+                        addButton("Keep Existing", "keep_existing");
+                    }
+                }
+
+            } catch (error) {
+                showMessage(error.message, true);
+            }
+        }
+
+        document.getElementById("refreshConflicts").onclick =
+            loadConflicts;
+
+        loadConflicts();
+
     </script>
 </body>
 </html>
