@@ -1,12 +1,24 @@
 # personal-finance-automation
-
-<img width="1800" height="971" alt="image" src="https://github.com/user-attachments/assets/51dec9c7-8e82-4a23-b387-b474d021c1c4" />
-<img width="1696" height="830" alt="image" src="https://github.com/user-attachments/assets/bb4acbab-12ca-4639-ad75-9033c11cb466" />
-
-
 ### Personal Finance Automation Tool
 
 This is a python based tool that automatically retrieves bank transactions from multiple accounts connected through plaid. It'll categorize recurring/expected expenses, and push reviewed transactions to a google sheets budgeting page. I put together this project to automate my existing budgeting workflow, without replacing the spreadsheet I already use. Rather than manually entering transactions from multiple accounts each week, the application consolidates them into a single review interface, where I can categorize spending, approve transactions, and update my budget
+
+<h2>Demo</h2>
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="screenshots/transaction-review.png" width="100%">
+      <br>
+      <b>Transaction Review Interface</b>
+    </td>
+    <td width="50%" align="center">
+      <img src="screenshots/google-sheets.png" width="100%">
+      <br>
+      <b>Automated Google Sheets Budget</b>
+    </td>
+  </tr>
+</table>
 
 ## Features
 
